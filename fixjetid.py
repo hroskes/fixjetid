@@ -9,6 +9,37 @@ if __name__ == "__main__":
   p.add_argument("--no-pu-id", action="store_false", dest="applypuid")
   args = p.parse_args()
 
+
+class MelaWrapper(object):
+  def __init__(self, *melaargs, **kwargs):
+    self.__melaargs = melaargs
+    self.__mela = kwargs.pop("mela", None)
+    self.__melaeventdummybranch = None
+    assert not kwargs
+  @property
+  def mela(self):
+    from ZZMatrixElement.MELA.mela import Mela
+    if self.__mela is None:
+      self.__mela = Mela(*self.__melaargs)
+    return self.__mela
+  def __getattr__(self, attr): return getattr(self.mela, attr)
+  def __setattr__(self, attr, value):
+    if "__" in attr: return super(MelaWrapper, self).__setattr__(attr, value)
+    return setattr(self.mela, attr, value)
+
+  def setInputEvent(self, melaeventdummybranch):
+    if self.__melaeventdummybranch is melaeventdummybranch: return
+    self.resetInputEvent()
+    self.__melaeventdummybranch = melaeventdummybranch
+    self.mela.setInputEvent(*melaeventdummybranch.lastsetbranchvalue)
+
+  def resetInputEvent(self):
+    self.__melaeventdummybranch = None
+    self.__mela.resetInputEvent()
+
+from ZZMatrixElement.MELA.mela import Mela, TVar
+mela = MelaWrapper(mela=Mela())
+
 import abc, os
 from itertools import izip
 
@@ -83,6 +114,7 @@ class Branch(object):
         raise ValueError("Wrong type for {}: {}, should be {}".format(self.__name, self.__type, type(getattr(t, self.__name))))
 
   def convertforxcheck(self, thing): return thing
+  def compareforxcheck(self, new, old): return new == old
 
   @abc.abstractmethod
   def setthingfortree(self, t, applyid, applypuid): pass
@@ -93,7 +125,7 @@ class Branch(object):
     if doxcheck:
       old = self.convertforxcheck(getattr(t, self.__name))
       new = self.convertforxcheck(newvalue)
-      if new != old:
+      if not self.compareforxcheck(new, old):
         raise ValueError("old value of {} is {}, not the same as the new calculated value {}".format(self.__name, old, new))
 
   @property
@@ -151,6 +183,11 @@ class NJetsBranch(NormalBranch):
       return sum(1 for id, puid, pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn in izip(t.JetID, t.JetPUID, t.JetPt, t.JetSigma, t.JetIsBtagged, t.JetIsBtaggedWithSF, t.JetIsBtaggedWithSFUp, t.JetIsBtaggedWithSFDn) if (id or not applyid) and (puid or not applypuid) and jetcondition(pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn))
     super(NJetsBranch, self).__init__(name, njetsfunction, np.short)
 
+def maketlv(pt, eta, phi, m):
+  result = ROOT.TLorentzVector()
+  result.SetPtEtaPhiM(pt, eta, phi, m)
+  return result
+
 class FirstNJetMomenta(DummyBranch):
   def __init__(self, n, ptbranch, etabranch, phibranch, massbranch):
     super(FirstNJetMomenta, self).__init__("first{}jets")
@@ -159,17 +196,12 @@ class FirstNJetMomenta(DummyBranch):
     self.__etabranch = etabranch
     self.__phibranch = phibranch
     self.__massbranch = massbranch
-  @staticmethod
-  def maketlv(pt, eta, phi, m):
-    result = ROOT.TLorentzVector()
-    result.SetPtEtaPhiM(pt, eta, phi, m)
-    return result
   def setthingfortree(self, t, applyid, applypuid):
     pt = [_ for _ in self.__ptbranch.lastsetbranchvalue[:self.__n] if _>30]
     eta = self.__etabranch.lastsetbranchvalue[:self.__n]
     phi = self.__phibranch.lastsetbranchvalue[:self.__n]
     mass = self.__massbranch.lastsetbranchvalue[:self.__n]
-    return [self.maketlv(*_) for _ in izip(pt, eta, phi, mass)]
+    return [maketlv(*_) for _ in izip(pt, eta, phi, mass)]
   @property
   def n(self):
     return self.__n
@@ -181,6 +213,42 @@ class FirstJetsVariable(NormalBranch):
       if len(jets) < firstjetmomentabranch.n: return fallbackvalue
       return functiononjets(*jets)
     super(FirstJetsVariable, self).__init__(name, function, typ)
+
+class MELAEventDummyBranch(DummyBranch):
+  def __init__(self, firstjetmomentabranch):
+    super(MELAEventDummyBranch, self).__init__(firstjetmomentabranch.name+"MELA")
+    self.__firstjetmomentabranch = firstjetmomentabranch
+  def setthingfortree(self, t, applyid, applypuid):
+    from ZZMatrixElement.MELA.mela import SimpleParticleCollection_t
+    leptons = SimpleParticleCollection_t(
+      (lepid, maketlv(pt, eta, phi, 0))
+        for lepid, pt, eta, phi in izip(t.LepLepId, t.LepPt, t.LepEta, t.LepPhi)
+    )
+    jets = SimpleParticleCollection_t(
+      (0, jet) for jet in self.__firstjetmomentabranch.lastsetbranchvalue
+    )
+    mothers = None
+    isGen = False
+    return leptons, jets, mothers, isGen
+  @property
+  def firstjetmomentabranch(self): return self.__firstjetmomentabranch
+
+class MELAProbability(FirstJetsVariable):
+  def __init__(self, name, melaeventdummybranch, setprocessargnames, couplings, melafunctionname):
+    setprocessargs = []
+    def function(*jets):
+      mela.setInputEvent(melaeventdummybranch)
+      if not setprocessargs:
+        from ZZMatrixElement.MELA.mela import TVar
+        for _ in setprocessargnames: setprocessargs.append(getattr(TVar, _))
+      mela.setProcess(*setprocessargs)
+      for coupling, value in couplings.iteritems():
+        setattr(mela, coupling, value)
+      return getattr(mela, melafunctionname)()
+    super(MELAProbability, self).__init__(name, function, np.float32, melaeventdummybranch.firstjetmomentabranch, -1)
+
+  def compareforxcheck(self, new, old):
+    return np.isclose(new, old, atol=0, rtol=1e-5)
 
 branches = [
   NJetsBranch("nCleanedJets", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: True),
@@ -237,6 +305,13 @@ branches += [
   NotRecalculatedBranch("DiJetFisher", -99, np.float32),
 ]
 
+MELAJECnominal2jets = MELAEventDummyBranch(first2jetmomenta)
+
+branches += [
+  MELAJECnominal2jets,
+  MELAProbability("p_JJVBF_SIG_ghv1_1_JHUGen_JECNominal", MELAJECnominal2jets, ("SelfDefine_spin0", "JHUGen", "JJVBF"), {"ghz1": 1}, "computeProdP"),
+]
+
 def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"]):
   print "Processing", infile, "-->", outfile
   with TFile(infile) as f, TFile(outfile, "CREATE", deleteifbad=True) as newf:
@@ -266,6 +341,7 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"]):
         for branch in branches:
           branch.setbranchvalue(t, applyid, applypuid, doxcheck)
         newt.Fill()
+        mela.resetInputEvent()
 
         if i%10000 == 0 or i == nentries:
           print i, "/", nentries
