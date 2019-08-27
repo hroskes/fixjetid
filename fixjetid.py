@@ -179,7 +179,8 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"]):
 
       failedt = folder.Get("candTree_failed")
       if failedt:
-        failedt.SetDirectory(newfolder)
+        newfailedt = failedt.CloneTree(-1, "fast")
+        newfailedt.SetDirectory(newfolder)
 
       t = folder.Get("candTree")
       newt = t.CloneTree(0, "fast")
