@@ -9,8 +9,9 @@ if __name__ == "__main__":
   p.add_argument("--no-pu-id", action="store_false", dest="applypuid")
   args = p.parse_args()
 
+import abc, os
 from itertools import izip
-import os
+
 import numpy as np
 import ROOT
 
@@ -61,42 +62,110 @@ class TFile(object):
     if self.__write and self.__deleteifbad and any(errorstuff):
       os.remove(self.__filename)
 
-
 class Branch(object):
-  def __init__(self, name, function, typ):
+  __metaclass__ = abc.ABCMeta
+  def __init__(self, name, typ):
     self.__name = name
-    self.__function = function
     self.__type = typ
 
-    self.__array = np.array([0], self.__type)
+  @abc.abstractproperty
+  def thingforsetbranchaddress(self): pass
 
   def attachtotree(self, t):
-    t.SetBranchAddress(self.__name, self.__array)
-    #if type(getattr(t, self.__name)) != self.__type:
-    #  raise ValueError("Wrong type for {}: {}, should be {}".format(self.__name, self.__type, type(getattr(t, self.__name))))
+    t.SetBranchAddress(self.__name, self.thingforsetbranchaddress)
+    target = type(getattr(t, self.__name))
+    if target != self.__type:
+      if target == int and self.__type == np.short:
+        pass #ok
+      else:
+        raise ValueError("Wrong type for {}: {}, should be {}".format(self.__name, self.__type, type(getattr(t, self.__name))))
+
+  def convertforxcheck(self, thing): return thing
+
+  @abc.abstractmethod
+  def setthingfortree(self, t, applyid, applypuid): pass
 
   def setbranchvalue(self, t, applyid, applypuid, doxcheck):
-    self.__array[0] = self.__function(t, applyid, applypuid)
+    newvalue = self.setthingfortree(t, applyid, applypuid)
     if doxcheck:
-      if self.__array[0] != getattr(t, self.__name):
-        raise ValueError("old value of {} is {}, not the same as the new calculated value {}".format(self.__name, getattr(t, self.__name), self.__array[0]))
+      old = self.convertforxcheck(getattr(t, self.__name))
+      new = self.convertforxcheck(newvalue)
+      if new != old:
+        raise ValueError("old value of {} is {}, not the same as the new calculated value {}".format(self.__name, old, new))
 
-def makenjetsbranch(name, jetcondition):
-  def njetsfunction(t, applyid, applypuid):
-    return sum(1 for id, puid, pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn in izip(t.JetID, t.JetPUID, t.JetPt, t.JetSigma, t.JetIsBtagged, t.JetIsBtaggedWithSF, t.JetIsBtaggedWithSFUp, t.JetIsBtaggedWithSFDn) if (id or not applyid) and (puid or not applypuid) and jetcondition(pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn))
-  return Branch(name, njetsfunction, np.short)
+  @property
+  def name(self): return self.__name
+
+
+class NormalBranch(Branch):
+  def __init__(self, name, function, typ):
+    super(NormalBranch, self).__init__(name, typ)
+    self.__function = function
+    self.__array = np.array([0], typ)
+  @property
+  def thingforsetbranchaddress(self): return self.__array
+  def setthingfortree(self, t, applyid, applypuid):
+    self.__array[0] = self.__function(t, applyid, applypuid)
+    return self.__array[0]
+
+
+class JetVectorBranch(Branch):
+  def __init__(self, name, typ):
+    vectortyp = ROOT.vector(typ)
+    super(JetVectorBranch, self).__init__(name, vectortyp)
+    self.__vector = vectortyp(0)
+  @property
+  def thingforsetbranchaddress(self): return self.__vector
+  def setthingfortree(self, t, applyid, applypuid):
+    self.__vector.clear()
+    for value, id, puid in izip(getattr(t, self.name), t.JetID, t.JetPUID):
+      if (id or not applyid) and (puid or not applypuid):
+        self.__vector.push_back(value)
+    return self.__vector
+
+  def convertforxcheck(self, thing): return list(thing)
+
+class NJetsBranch(NormalBranch):
+  def __init__(self, name, jetcondition):
+    def njetsfunction(t, applyid, applypuid):
+      return sum(1 for id, puid, pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn in izip(t.JetID, t.JetPUID, t.JetPt, t.JetSigma, t.JetIsBtagged, t.JetIsBtaggedWithSF, t.JetIsBtaggedWithSFUp, t.JetIsBtaggedWithSFDn) if (id or not applyid) and (puid or not applypuid) and jetcondition(pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn))
+    super(NJetsBranch, self).__init__(name, njetsfunction, np.short)
 
 branches = [
-  makenjetsbranch("nCleanedJets", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: True),
-  makenjetsbranch("nCleanedJetsPt30", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30),
-  makenjetsbranch("nCleanedJetsPt30_jecUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1+sigma)>30),
-  makenjetsbranch("nCleanedJetsPt30_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30),
-  makenjetsbranch("nCleanedJetsPt30BTagged", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtagged),
-  makenjetsbranch("nCleanedJetsPt30BTagged_bTagSF", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsf),
-  makenjetsbranch("nCleanedJetsPt30BTagged_bTagSFUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsfup),
-  makenjetsbranch("nCleanedJetsPt30BTagged_bTagSFDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsfdn),
-  makenjetsbranch("nCleanedJetsPt30BTagged_bTagSF_jecUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1+sigma)>30 and isbtagged),
-  makenjetsbranch("nCleanedJetsPt30BTagged_bTagSF_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30 and isbtagged),
+  NJetsBranch("nCleanedJets", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: True),
+  NJetsBranch("nCleanedJetsPt30", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30),
+  NJetsBranch("nCleanedJetsPt30_jecUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1+sigma)>30),
+  NJetsBranch("nCleanedJetsPt30_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30),
+  NJetsBranch("nCleanedJetsPt30BTagged", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtagged),
+  NJetsBranch("nCleanedJetsPt30BTagged_bTagSF", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsf),
+  NJetsBranch("nCleanedJetsPt30BTagged_bTagSFUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsfup),
+  NJetsBranch("nCleanedJetsPt30BTagged_bTagSFDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsfdn),
+  NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1+sigma)>30 and isbtagged),
+  NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30 and isbtagged),
+
+  JetVectorBranch("JetPt", float),
+  JetVectorBranch("JetEta", float),
+  JetVectorBranch("JetPhi", float),
+  JetVectorBranch("JetMass", float),
+  JetVectorBranch("JetBTagger", float),
+  JetVectorBranch("JetIsBtagged", float),
+  JetVectorBranch("JetIsBtaggedWithSF", float),
+  JetVectorBranch("JetIsBtaggedWithSFUp", float),
+  JetVectorBranch("JetIsBtaggedWithSFDn", float),
+  JetVectorBranch("JetQGLikelihood", float),
+  JetVectorBranch("JetAxis2", float),
+  JetVectorBranch("JetMult", float),
+  JetVectorBranch("JetPtD", float),
+  JetVectorBranch("JetSigma", float),
+  JetVectorBranch("JetHadronFlavour", "short"),
+  JetVectorBranch("JetPartonFlavour", "short"),
+  JetVectorBranch("JetRawPt", float),
+  JetVectorBranch("JetPtJEC_noJER", float),
+  JetVectorBranch("JetJERUp", float),
+  JetVectorBranch("JetJERDown", float),
+  JetVectorBranch("JetID", "short"),
+  JetVectorBranch("JetPUID", "short"),
+  JetVectorBranch("JetPUValue", float),
 ]
 
 def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"]):
@@ -108,9 +177,13 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"]):
       Counters = folder.Get("Counters")
       Counters.SetDirectory(newfolder)
 
+      failedt = folder.Get("candTree_failed")
+      if failedt:
+        failedt.SetDirectory(newfolder)
+
       t = folder.Get("candTree")
       newt = t.CloneTree(0, "fast")
-      newt.SetDirectory(newf)
+      newt.SetDirectory(newfolder)
 
       for branch in branches:
         branch.attachtotree(newt)
