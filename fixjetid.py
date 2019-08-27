@@ -120,7 +120,7 @@ class Branch(object):
         raise ValueError("Wrong type for {}: {}, should be {}".format(self.__name, self.__type, type(getattr(t, self.__name))))
 
   def convertforxcheck(self, thing): return thing
-  def compareforxcheck(self, new, old): return new == old
+  def compareforxcheck(self, new, old, t): return new == old
 
   @abc.abstractmethod
   def setthingfortree(self, t, applyid, applypuid): pass
@@ -131,7 +131,7 @@ class Branch(object):
     if doxcheck:
       old = self.convertforxcheck(getattr(t, self.__name))
       new = self.convertforxcheck(newvalue)
-      if not self.compareforxcheck(new, old):
+      if not self.compareforxcheck(new, old, t):
         raise ValueError("old value of {} is {}, not the same as the new calculated value {}".format(self.__name, old, new))
 
   @property
@@ -195,22 +195,35 @@ def maketlv(pt, eta, phi, m):
   return result
 
 class FirstNJetMomenta(DummyBranch):
-  def __init__(self, n, ptbranch, etabranch, phibranch, massbranch, rejectiftoomany=False):
-    super(FirstNJetMomenta, self).__init__("first{}jets")
+  def __init__(self, n, ptbranch, etabranch, phibranch, massbranch, sigmabranch=None, jecdirection=None, rejectiftoomany=False):
+    super(FirstNJetMomenta, self).__init__("first{}jetsjec{}".format(n, jecdirection))
     self.__n = n
     self.__ptbranch = ptbranch
     self.__etabranch = etabranch
     self.__phibranch = phibranch
     self.__massbranch = massbranch
     self.__rejectiftoomany = rejectiftoomany
+    self.__sigmabranch = sigmabranch
+    self.__jecdirection = jecdirection
   def setthingfortree(self, t, applyid, applypuid):
-    pt = [_ for _ in self.__ptbranch.lastsetbranchvalue if _>30]
-    if self.__rejectiftoomany and len(pt) > self.__n: pt = []
-    pt = pt[:self.__n]
-    eta = self.__etabranch.lastsetbranchvalue[:self.__n]
-    phi = self.__phibranch.lastsetbranchvalue[:self.__n]
-    mass = self.__massbranch.lastsetbranchvalue[:self.__n]
-    return [maketlv(*_) for _ in izip(pt, eta, phi, mass)]
+    pt = self.__ptbranch.lastsetbranchvalue
+    mass = self.__massbranch.lastsetbranchvalue
+    if self.__sigmabranch is not None:
+      sigma = self.__sigmabranch.lastsetbranchvalue
+      pt = [_ * (1 + self.__jecdirection * s) for _, s in izip(pt, sigma)]
+      mass = [_ * (1 + self.__jecdirection * s) for _, s in izip(mass, sigma)]
+    pt = [_ for _ in pt if _>30]
+
+    eta = self.__etabranch.lastsetbranchvalue
+    phi = self.__phibranch.lastsetbranchvalue
+
+    result = [maketlv(*_) for _ in izip(pt, eta, phi, mass)]
+    result.sort(key=lambda x: x.Pt(), reverse=True)
+
+    if self.__rejectiftoomany and len(result) > self.__n: result = []
+
+    result = result[:self.__n]
+    return result
   @property
   def n(self):
     return self.__n
@@ -272,7 +285,14 @@ class MELAProbability(FirstJetsVariable):
       return result - sum(_.lastsetbranchvalue for _ in subtractbranches)
     super(MELAProbability, self).__init__(name, function, np.float32, melaeventdummybranch.firstjetmomentabranch, -1)
 
-  def compareforxcheck(self, new, old):
+  def compareforxcheck(self, new, old, t):
+    if (
+      ("_JVBF_" in self.name or "_JQCD_" in self.name)
+      and "JECUp" in self.name
+      and new == -1
+      and old > 0
+      and t.nCleanedJetsPt30_jecUp > 1
+    ): return True
     return np.isclose(new, old, atol=0, rtol=1e-3)
 
 branches = [
@@ -292,6 +312,7 @@ jetpt = JetVectorBranch("JetPt", "float")
 jeteta = JetVectorBranch("JetEta", "float")
 jetphi = JetVectorBranch("JetPhi", "float")
 jetmass = JetVectorBranch("JetMass", "float")
+jetsigma = JetVectorBranch("JetSigma", "float")
 
 branches += [
   jetpt,
@@ -307,7 +328,7 @@ branches += [
   JetVectorBranch("JetAxis2", "float"),
   JetVectorBranch("JetMult", "float"),
   JetVectorBranch("JetPtD", "float"),
-  JetVectorBranch("JetSigma", "float"),
+  jetsigma,
   JetVectorBranch("JetHadronFlavour", "short"),
   JetVectorBranch("JetPartonFlavour", "short"),
   JetVectorBranch("JetRawPt", "float"),
@@ -321,12 +342,20 @@ branches += [
 
 first2jetmomenta = FirstNJetMomenta(2, jetpt, jeteta, jetphi, jetmass)
 onlyjetmomentum = FirstNJetMomenta(1, jetpt, jeteta, jetphi, jetmass, rejectiftoomany=True)
+first2jetmomentajecup = FirstNJetMomenta(2, jetpt, jeteta, jetphi, jetmass, sigmabranch=jetsigma, jecdirection=1)
+onlyjetmomentumjecup = FirstNJetMomenta(1, jetpt, jeteta, jetphi, jetmass, rejectiftoomany=True, sigmabranch=jetsigma, jecdirection=1)
+first2jetmomentajecdn = FirstNJetMomenta(2, jetpt, jeteta, jetphi, jetmass, sigmabranch=jetsigma, jecdirection=-1)
+onlyjetmomentumjecdn = FirstNJetMomenta(1, jetpt, jeteta, jetphi, jetmass, rejectiftoomany=True, sigmabranch=jetsigma, jecdirection=-1)
 dijetmass = FirstJetsVariable("DiJetMass", lambda jet1, jet2: (jet1+jet2).M(), np.float32, first2jetmomenta, -99)
 dijetdeta = FirstJetsVariable("DiJetDEta", lambda jet1, jet2: jet1.Eta() - jet2.Eta(), np.float32, first2jetmomenta, -99)
 
 branches += [
   first2jetmomenta,
   onlyjetmomentum,
+  first2jetmomentajecup,
+  onlyjetmomentumjecup,
+  first2jetmomentajecdn,
+  onlyjetmomentumjecdn,
   dijetmass,
   dijetdeta,
   NotRecalculatedBranch("DiJetFisher", -99, np.float32),
@@ -334,10 +363,18 @@ branches += [
 
 MELAJECnominal2jets = MELAEventDummyBranch(first2jetmomenta)
 MELAJECnominal1jet = MELAEventDummyBranch(onlyjetmomentum)
+MELAJECup2jets = MELAEventDummyBranch(first2jetmomentajecup)
+MELAJECup1jet = MELAEventDummyBranch(onlyjetmomentumjecup)
+MELAJECdn2jets = MELAEventDummyBranch(first2jetmomentajecdn)
+MELAJECdn1jet = MELAEventDummyBranch(onlyjetmomentumjecdn)
 
 branches += [
   MELAJECnominal1jet,
   MELAJECnominal2jets,
+  MELAJECup1jet,
+  MELAJECup2jets,
+  MELAJECdn1jet,
+  MELAJECdn2jets,
 ]
 
 MELAbranchesdict = {}
@@ -363,10 +400,6 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
         value = complex(value.replace(",", "+")+"j")
         couplings[name] = value
 
-    subtractbranches = []
-    if "SubtractP" in options:
-      subtractbranches = [MELAbranchesdict[_] for _ in options["SubtractP"].split(",") if "ttH" not in _]
-
     initialQQ = False
     if "ForceIncomingFlavors" in options:
       assert options["ForceIncomingFlavors"] == "-21,-21", options["ForceIncomingFlavors"]
@@ -383,22 +416,37 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
       melafunctionname = "computeDijetConvBW"
       melafunctionargs = True,
 
-    branches.append(
-      MELAProbability(
-        "p_"+options["Name"],
-        {
-          "J1JECNominal": MELAJECnominal1jet,
-          "J2JECNominal": MELAJECnominal2jets,
-        }[options["Cluster"]],
-        (options["Process"], options["MatrixElement"], options["Production"]),
-        couplings,
-        melafunctionname,
-        melafunctionargs,
-        subtractbranches,
-        initialQQ,
+    for jec in "Nominal", "Up", "Dn":
+      name = options["Name"]
+      assert "Nominal" in name
+      name = name.replace("Nominal", jec)
+
+      inputevent = {
+        ("J1JECNominal", "Nominal"): MELAJECnominal1jet,
+        ("J2JECNominal", "Nominal"): MELAJECnominal2jets,
+        ("J1JECNominal", "Up"): MELAJECup1jet,
+        ("J2JECNominal", "Up"): MELAJECup2jets,
+        ("J1JECNominal", "Dn"): MELAJECdn1jet,
+        ("J2JECNominal", "Dn"): MELAJECdn2jets,
+      }[options["Cluster"], jec]
+
+      subtractbranches = []
+      if "SubtractP" in options:
+        subtractbranches = [MELAbranchesdict[_.replace("Nominal", jec)] for _ in options["SubtractP"].split(",") if "ttH" not in _]
+
+      branches.append(
+        MELAProbability(
+          "p_"+name,
+          inputevent,
+          (options["Process"], options["MatrixElement"], options["Production"]),
+          couplings,
+          melafunctionname,
+          melafunctionargs,
+          subtractbranches,
+          initialQQ,
+        )
       )
-    )
-    MELAbranchesdict[options["Name"]] = branches[-1]
+      MELAbranchesdict[name] = branches[-1]
 
 def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], test_no_mela=False):
   print "Processing", infile, "-->", outfile
