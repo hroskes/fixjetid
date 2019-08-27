@@ -244,7 +244,7 @@ class MELAEventDummyBranch(DummyBranch):
   def firstjetmomentabranch(self): return self.__firstjetmomentabranch
 
 class MELAProbability(FirstJetsVariable):
-  def __init__(self, name, melaeventdummybranch, setprocessargnames, couplings, melafunctionname, subtractbranches=[]):
+  def __init__(self, name, melaeventdummybranch, setprocessargnames, couplings, melafunctionname, melafunctionargs, subtractbranches=[], initialQQ=False):
     setprocessargs = []
     def function(*jets):
       mela.setInputEvent(melaeventdummybranch)
@@ -254,7 +254,22 @@ class MELAProbability(FirstJetsVariable):
       mela.setProcess(*setprocessargs)
       for coupling, value in couplings.iteritems():
         setattr(mela, coupling, value)
-      return getattr(mela, melafunctionname)() - sum(_.lastsetbranchvalue for _ in subtractbranches)
+      result = getattr(mela, melafunctionname)(*melafunctionargs)
+
+      if initialQQ:
+        result = 0
+        iorcd = mela.getIORecord()
+        mearray = iorcd.getWeightedMEArray()
+        MEsq = iorcd.getUnweightedMEArray()
+        partonWeight = iorcd.getPartonWeights()
+        for i in range(-5, 6):
+          for j in range(-5, 6):
+            if i==0 or j==0: continue
+            result += mearray[i+5][j+5]#MEsq[i+5][j+5]*partonWeight[0][i+5]*partonWeight[1][j+5]
+        for _ in mearray:
+          print _
+
+      return result - sum(_.lastsetbranchvalue for _ in subtractbranches)
     super(MELAProbability, self).__init__(name, function, np.float32, melaeventdummybranch.firstjetmomentabranch, -1)
 
   def compareforxcheck(self, new, old):
@@ -331,8 +346,8 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
   for line in f:
     line = line.split("#")[0]
     if "Name:" not in line: continue
-    options = dict(re.findall(r"(\w+):([^ ]+)", line))
-    if "BestDJJ" in options["Name"]:
+    options = dict(re.findall(r"(\w+):([^ '\"]+)", line))
+    if "BestDJJ" in options["Name"] or "InitialQQ" in options["Name"] or "ttHUn" in options["Name"]:
       branches.append(NotRecalculatedBranch("p_"+options["Name"], -999, np.float32))
       continue
     if options["Production"] in ("ZZGG", "Lep_ZH", "Lep_WH", "ZZQQB", "ZZINDEPENDENT"): continue
@@ -352,6 +367,22 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
     if "SubtractP" in options:
       subtractbranches = [MELAbranchesdict[_] for _ in options["SubtractP"].split(",") if "ttH" not in _]
 
+    initialQQ = False
+    if "ForceIncomingFlavors" in options:
+      assert options["ForceIncomingFlavors"] == "-21,-21", options["ForceIncomingFlavors"]
+      initialQQ = True
+
+    melafunctionname = {
+      "JHUGen": "computeProdP",
+      "MCFM": "computeProdDecP",
+    }[options["MatrixElement"]]
+    melafunctionargs = ()
+    if int(options.get("isPMaVJJ", 0)):
+      melafunctionname = "computeDijetConvBW"
+    if int(options.get("isPMaVJJTrue", 0)):
+      melafunctionname = "computeDijetConvBW"
+      melafunctionargs = True,
+
     branches.append(
       MELAProbability(
         "p_"+options["Name"],
@@ -361,15 +392,14 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
         }[options["Cluster"]],
         (options["Process"], options["MatrixElement"], options["Production"]),
         couplings,
-        {
-          "JHUGen": "computeProdP",
-          "MCFM": "computeProdDecP",
-        }[options["MatrixElement"]],
+        melafunctionname,
+        melafunctionargs,
         subtractbranches,
+        initialQQ,
       )
     )
     MELAbranchesdict[options["Name"]] = branches[-1]
-        
+
 def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], test_no_mela=False):
   print "Processing", infile, "-->", outfile
   with TFile(infile) as f, TFile(outfile, "CREATE", deleteifbad=True) as newf:
