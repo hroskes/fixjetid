@@ -46,7 +46,7 @@ else:
   from ZZMatrixElement.MELA.mela import Mela
   mela = MelaWrapper(mela=Mela())
 
-import abc, os, re
+import abc, collections, os, re
 from itertools import izip
 
 import numpy as np
@@ -99,6 +99,8 @@ class TFile(object):
     if self.__write and self.__deleteifbad and any(errorstuff):
       os.remove(self.__filename)
 
+class FailedXcheckError(Exception): pass
+
 class Branch(object):
   __metaclass__ = abc.ABCMeta
   def __init__(self, name, typ):
@@ -132,7 +134,7 @@ class Branch(object):
       old = self.convertforxcheck(getattr(t, self.__name))
       new = self.convertforxcheck(newvalue)
       if not self.compareforxcheck(new, old, t):
-        raise ValueError("old value of {} is {}, not the same as the new calculated value {}".format(self.__name, old, new))
+        raise FailedXcheckError("old value of {} is {}, not the same as the new calculated value {}".format(self.__name, old, new))
 
   @property
   def name(self): return self.__name
@@ -471,19 +473,30 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], 
 
       nentries = t.GetEntries()
       nxchecks = 0
+      nbadxchecks = collections.Counter()
+      worstbadxcheck = collections.defaultdict(lambda: None)
       for i, entry in enumerate(t, start=1):
         doxcheck = (all(t.JetID) or not applyid) and (all(t.JetPUID) or not applypuid)
         nxchecks += doxcheck
         for branch in branches:
-          branch.setbranchvalue(t, applyid, applypuid, doxcheck)
+          try:
+            branch.setbranchvalue(t, applyid, applypuid, doxcheck)
+          except FailedXcheckError:
+            nbadxchecks[branch.name] += 1
         newt.Fill()
         mela.resetInputEvent()
 
-        if i%10000 == 0 or i == nentries:
+        if i%10000 == 0 or i == nentries or True:
           print i, "/", nentries
 
     print "Done!"
-    print "Did xchecks on", nxchecks, "that had all jets passing ID and PUID: all confirmed unchanged"
+    print "Did xchecks on", nxchecks, " branches that had all jets passing ID and PUID"
+    if nbadxchecks:
+      print "The following branches had some disagreements:"
+      for k, v in sorted(nbadxchecks.iteritems(), key=reversed):
+        print "{:50} {}".format(k, v)
+    else:
+      print "All xchecks pass"
     print
 
 if __name__ == "__main__":
