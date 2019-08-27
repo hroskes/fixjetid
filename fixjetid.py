@@ -77,6 +77,8 @@ class Branch(object):
     if target != self.__type:
       if target == int and self.__type == np.short:
         pass #ok
+      elif target == float and self.__type == np.float32:
+        pass #ok
       else:
         raise ValueError("Wrong type for {}: {}, should be {}".format(self.__name, self.__type, type(getattr(t, self.__name))))
 
@@ -87,6 +89,7 @@ class Branch(object):
 
   def setbranchvalue(self, t, applyid, applypuid, doxcheck):
     newvalue = self.setthingfortree(t, applyid, applypuid)
+    self.lastsetbranchvalue = newvalue
     if doxcheck:
       old = self.convertforxcheck(getattr(t, self.__name))
       new = self.convertforxcheck(newvalue)
@@ -96,6 +99,18 @@ class Branch(object):
   @property
   def name(self): return self.__name
 
+class DummyBranch(Branch):
+  """
+  Branch that doesn't actually go into the tree but can be used to calculate things
+  """
+  def __init__(self, name):
+    return super(DummyBranch, self).__init__(name, "DUMMY")
+  @property
+  def thingforsetbranchaddress(self): return None
+  def attachtotree(self, t): pass
+
+  def setbranchvalue(self, t, applyid, applypuid, doxcheck):
+    super(DummyBranch, self).setbranchvalue(t, applyid, applypuid, False)
 
 class NormalBranch(Branch):
   def __init__(self, name, function, typ):
@@ -108,6 +123,11 @@ class NormalBranch(Branch):
     self.__array[0] = self.__function(t, applyid, applypuid)
     return self.__array[0]
 
+class NotRecalculatedBranch(NormalBranch):
+  def __init__(self, name, dummyvalue, typ):
+    super(NotRecalculatedBranch, self).__init__(name, lambda *stuff: dummyvalue, typ)
+  def setbranchvalue(self, t, applyid, applypuid, doxcheck):
+    super(NotRecalculatedBranch, self).setbranchvalue(t, applyid, applypuid, False)
 
 class JetVectorBranch(Branch):
   def __init__(self, name, typ):
@@ -131,6 +151,37 @@ class NJetsBranch(NormalBranch):
       return sum(1 for id, puid, pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn in izip(t.JetID, t.JetPUID, t.JetPt, t.JetSigma, t.JetIsBtagged, t.JetIsBtaggedWithSF, t.JetIsBtaggedWithSFUp, t.JetIsBtaggedWithSFDn) if (id or not applyid) and (puid or not applypuid) and jetcondition(pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn))
     super(NJetsBranch, self).__init__(name, njetsfunction, np.short)
 
+class FirstNJetMomenta(DummyBranch):
+  def __init__(self, n, ptbranch, etabranch, phibranch, massbranch):
+    super(FirstNJetMomenta, self).__init__("first{}jets")
+    self.__n = n
+    self.__ptbranch = ptbranch
+    self.__etabranch = etabranch
+    self.__phibranch = phibranch
+    self.__massbranch = massbranch
+  @staticmethod
+  def maketlv(pt, eta, phi, m):
+    result = ROOT.TLorentzVector()
+    result.SetPtEtaPhiM(pt, eta, phi, m)
+    return result
+  def setthingfortree(self, t, applyid, applypuid):
+    pt = [_ for _ in self.__ptbranch.lastsetbranchvalue[:self.__n] if _>30]
+    eta = self.__etabranch.lastsetbranchvalue[:self.__n]
+    phi = self.__phibranch.lastsetbranchvalue[:self.__n]
+    mass = self.__massbranch.lastsetbranchvalue[:self.__n]
+    return [self.maketlv(*_) for _ in izip(pt, eta, phi, mass)]
+  @property
+  def n(self):
+    return self.__n
+
+class FirstJetsVariable(NormalBranch):
+  def __init__(self, name, functiononjets, typ, firstjetmomentabranch, fallbackvalue):
+    def function(t, applyid, applypuid):
+      jets = firstjetmomentabranch.lastsetbranchvalue
+      if len(jets) < firstjetmomentabranch.n: return fallbackvalue
+      return functiononjets(*jets)
+    super(FirstJetsVariable, self).__init__(name, function, typ)
+
 branches = [
   NJetsBranch("nCleanedJets", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: True),
   NJetsBranch("nCleanedJetsPt30", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30),
@@ -142,30 +193,48 @@ branches = [
   NJetsBranch("nCleanedJetsPt30BTagged_bTagSFDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsfdn),
   NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1+sigma)>30 and isbtagged),
   NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30 and isbtagged),
+]
 
-  JetVectorBranch("JetPt", float),
-  JetVectorBranch("JetEta", float),
-  JetVectorBranch("JetPhi", float),
-  JetVectorBranch("JetMass", float),
-  JetVectorBranch("JetBTagger", float),
-  JetVectorBranch("JetIsBtagged", float),
-  JetVectorBranch("JetIsBtaggedWithSF", float),
-  JetVectorBranch("JetIsBtaggedWithSFUp", float),
-  JetVectorBranch("JetIsBtaggedWithSFDn", float),
-  JetVectorBranch("JetQGLikelihood", float),
-  JetVectorBranch("JetAxis2", float),
-  JetVectorBranch("JetMult", float),
-  JetVectorBranch("JetPtD", float),
-  JetVectorBranch("JetSigma", float),
+jetpt = JetVectorBranch("JetPt", "float")
+jeteta = JetVectorBranch("JetEta", "float")
+jetphi = JetVectorBranch("JetPhi", "float")
+jetmass = JetVectorBranch("JetMass", "float")
+
+branches += [
+  jetpt,
+  jeteta,
+  jetphi,
+  jetmass,
+  JetVectorBranch("JetBTagger", "float"),
+  JetVectorBranch("JetIsBtagged", "float"),
+  JetVectorBranch("JetIsBtaggedWithSF", "float"),
+  JetVectorBranch("JetIsBtaggedWithSFUp", "float"),
+  JetVectorBranch("JetIsBtaggedWithSFDn", "float"),
+  JetVectorBranch("JetQGLikelihood", "float"),
+  JetVectorBranch("JetAxis2", "float"),
+  JetVectorBranch("JetMult", "float"),
+  JetVectorBranch("JetPtD", "float"),
+  JetVectorBranch("JetSigma", "float"),
   JetVectorBranch("JetHadronFlavour", "short"),
   JetVectorBranch("JetPartonFlavour", "short"),
-  JetVectorBranch("JetRawPt", float),
-  JetVectorBranch("JetPtJEC_noJER", float),
-  JetVectorBranch("JetJERUp", float),
-  JetVectorBranch("JetJERDown", float),
+  JetVectorBranch("JetRawPt", "float"),
+  JetVectorBranch("JetPtJEC_noJER", "float"),
+  JetVectorBranch("JetJERUp", "float"),
+  JetVectorBranch("JetJERDown", "float"),
   JetVectorBranch("JetID", "short"),
   JetVectorBranch("JetPUID", "short"),
-  JetVectorBranch("JetPUValue", float),
+  JetVectorBranch("JetPUValue", "float"),
+]
+
+first2jetmomenta = FirstNJetMomenta(2, jetpt, jeteta, jetphi, jetmass)
+dijetmass = FirstJetsVariable("DiJetMass", lambda jet1, jet2: (jet1+jet2).M(), np.float32, first2jetmomenta, -99)
+dijetdeta = FirstJetsVariable("DiJetDEta", lambda jet1, jet2: jet1.Eta() - jet2.Eta(), np.float32, first2jetmomenta, -99)
+
+branches += [
+  first2jetmomenta,
+  dijetmass,
+  dijetdeta,
+  NotRecalculatedBranch("DiJetFisher", -99, np.float32),
 ]
 
 def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"]):
