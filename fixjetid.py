@@ -281,9 +281,8 @@ class MELAProbability(FirstJetsVariable):
           for j in range(-5, 6):
             if i==0 or j==0: continue
             result += mearray[i+5][j+5]#MEsq[i+5][j+5]*partonWeight[0][i+5]*partonWeight[1][j+5]
-        for _ in mearray:
-          print _
-
+        cMEAvg=mela.getConstant()
+        result=result*cMEAvg
       return result - sum(_.lastsetbranchvalue for _ in subtractbranches)
     super(MELAProbability, self).__init__(name, function, np.float32, melaeventdummybranch.firstjetmomentabranch, -1)
 
@@ -390,7 +389,7 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
     line = line.split("#")[0]
     if "Name:" not in line: continue
     options = dict(re.findall(r"(\w+):([^ '\"]+)", line))
-    if "BestDJJ" in options["Name"] or "InitialQQ" in options["Name"] or "ttHUn" in options["Name"]:
+    if "BestDJJ" in options["Name"] or "ttHUn" in options["Name"]:
       branches.append(NotRecalculatedBranch("p_"+options["Name"], -999, np.float32))
       continue
     if options["Production"] in ("ZZGG", "Lep_ZH", "Lep_WH", "ZZQQB", "ZZINDEPENDENT"): continue
