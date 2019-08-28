@@ -88,11 +88,13 @@ def run(a, b, testing=False, print_order=False):
 folders = []
 
 for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", "MC_2017", "MC_2017_anomalous", "MC_2018", "MC_2018_anomalous":
-  if {
-    "jroskes1@jhu.edu": "2016",
-    "agritsa1@jhu.edu": "2017",
-    "skyriac2@jhu.edu": "2018",
-  }[getpass.getuser()] not in a: continue
+  if "2016" in a or "2018" in a:
+    if getpass.getuser() != "jroskes1@jhu.edu": continue
+  elif "anomalous" in a:
+    if getpass.getuser() != "agritsa1@jhu.edu": continue
+  else:
+    if getpass.getuser() != "skyriac2@jhu.edu": continue
+
   if "Data" in a: continue #debugging CR
 
   for b in os.listdir(os.path.join(oldmaindir, a)):
