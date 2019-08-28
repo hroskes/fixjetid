@@ -9,7 +9,9 @@ if __name__ == "__main__":
   p.add_argument("--no-pu-id", action="store_false", dest="applypuid")
   p.add_argument("--test-no-mela", action="store_true")
   p.add_argument("--first-event", type=int, default=0, dest="firstevent")
+  p.add_argument("--last-event", type=int, default=0, dest="lastevent")
   p.add_argument("--debug", action="store_true")
+  p.add_argument("--doCRZLL", action="store_true")
   args = p.parse_args()
 
 
