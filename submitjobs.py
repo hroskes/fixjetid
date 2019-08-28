@@ -14,6 +14,12 @@ newmaindir = "/work-zfs/lhc/CJLSTtrees/190821_fixjetid/"
 
 eventsperjob = 10000
 
+def jobisrunning(name):
+  output = subprocess.check_output(["squeue", "--name", name])
+  for line in output.strip().split("\n"):
+    if "JOBID" not in line: return True
+  return False
+
 def mkdir_p(path):
   """http://stackoverflow.com/a/600612/5228524"""
   try:
@@ -31,7 +37,11 @@ def run(a, b, testing=False, print_order=False):
   newdir = os.path.join(newmaindir, a, b)
   mkdir_p(newdir)
   newfilename = os.path.join(newdir, "ZZ4lAnalysis.root")
-  if os.path.exists(newfilename): return
+  if os.path.exists(newfilename):
+    f = ROOT.TFile(newfilename)
+    assert f.Get("ZZTree/candTree").GetEntries()
+    if b == "AllData": assert f.Get("CRZLLTree/candTree").GetEntries()
+    return
 
   f = ROOT.TFile(oldfilename)
   t = f.Get("ZZTree/candTree")
@@ -58,7 +68,7 @@ def run(a, b, testing=False, print_order=False):
     cmdline = [
       "sbatch",
       "--job-name="+os.path.join(a, b, os.path.basename(newsubfilename)),
-      "--time=1:0:0",
+      "--time=2:0:0",
       "--nodes=1",
       "--mem=3000",
       "--partition=shared",
@@ -73,11 +83,18 @@ def run(a, b, testing=False, print_order=False):
 
     haddcommand.append(newsubfilename)
 
+    if jobisrunning(os.path.join(a, b, os.path.basename(newsubfilename))):
+      dohadd = False
+      continue
+
     if os.path.exists(newsubfilename):
       f = ROOT.TFile(newsubfilename)
       if not f.Get("ZZTree/candTree"):
+        del f
+        os.remove(newsubfilename)
         dohadd = False
-    else:
+
+    if not os.path.exists(newsubfilename):
       subprocess.check_call(cmdline)
       dohadd = False
       if testing: return "submitted"
@@ -88,15 +105,6 @@ def run(a, b, testing=False, print_order=False):
 folders = []
 
 for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", "MC_2017", "MC_2017_anomalous", "MC_2018", "MC_2018_anomalous":
-  if "2016" in a or "2018" in a:
-    if getpass.getuser() != "jroskes1@jhu.edu": continue
-  elif "anomalous" in a:
-    if getpass.getuser() != "agritsa1@jhu.edu": continue
-  else:
-    if getpass.getuser() != "skyriac2@jhu.edu": continue
-
-  if "Data" in a: continue #debugging CR
-
   for b in os.listdir(os.path.join(oldmaindir, a)):
     if b == "AAAOK": continue
     if b.lower() == "chunks": continue

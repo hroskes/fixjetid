@@ -540,6 +540,7 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_
   cache = []
   with TFile(infile) as f, TFile(outfile, "CREATE", deleteifbad=True) as newf:
     for foldername in folders:
+      print "folder:", foldername
       folder = f.Get(foldername)
       newfolder = newf.mkdir(foldername)
 
@@ -601,15 +602,15 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_
         if (i+1)%10000 == 0 or (i+1) == nentries or True:
           print i+1, "/", nentries
 
-    print "Done!"
-    print "Did xchecks on", nxchecks, " branches that had all jets passing ID and PUID"
-    if nbadxchecks:
-      print "The following branches had some disagreements:"
-      for k, v in sorted(nbadxchecks.iteritems(), key=lambda x: (x[1], x[0])):
-        print "{:50} {}".format(k, v)
-    else:
-      print "All xchecks pass"
-    print
+      print "Done!"
+      print "Did xchecks on", nxchecks, " branches that had all jets passing ID and PUID"
+      if nbadxchecks:
+        print "The following branches had some disagreements:"
+        for k, v in sorted(nbadxchecks.iteritems(), key=lambda x: (x[1], x[0])):
+          print "{:50} {}".format(k, v)
+      else:
+        print "All xchecks pass"
+      print
 
 if __name__ == "__main__":
   fixjetid(**args.__dict__)
