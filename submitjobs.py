@@ -73,10 +73,14 @@ def run(a, b, testing=False, print_order=False):
 
     haddcommand.append(newsubfilename)
 
-    if not os.path.exists(newsubfilename):
+    if os.path.exists(newsubfilename):
+      f = ROOT.TFile(newsubfilename)
+      if not f.Get("ZZTree/candTree"):
+        dohadd = False
+    else:
       subprocess.check_call(cmdline)
       dohadd = False
-      if testing: return
+      if testing: return "submitted"
 
   if dohadd:
     subprocess.check_call(haddcommand)
@@ -108,5 +112,5 @@ def sortorder(folder):
 folders.sort(key=sortorder)
 
 for a, b in folders:
-  run(a, b, **args.__dict__)
-  if args.testing: break
+  result = run(a, b, **args.__dict__)
+  if args.testing and result == "submitted": break
