@@ -33,6 +33,10 @@ class MelaWrapper(object):
     if self.__melaeventdummybranch is melaeventdummybranch: return
     self.resetInputEvent()
     self.__melaeventdummybranch = melaeventdummybranch
+    print "===================================="
+    jets = melaeventdummybranch.lastsetbranchvalue[1]
+    for _ in jets: _.second.Print()
+    print "===================================="
     self.mela.setInputEvent(*melaeventdummybranch.lastsetbranchvalue)
 
   def resetInputEvent(self):
@@ -230,7 +234,7 @@ class FirstNJetMomenta(DummyBranch):
     phi = self.__phibranch.lastsetbranchvalue
 
     result = [maketlv(*_) for _ in izip(pt, eta, phi, mass)]
-    result.sort(key=lambda x: x.Pt(), reverse=True)
+#    result.sort(key=lambda x: x.Pt(), reverse=True)
 
     if self.__rejectiftoomany and len(result) > self.__n: result = []
 
@@ -497,12 +501,19 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], 
           try:
             branch.setbranchvalue(t, applyid, applypuid, doxcheck)
           except FailedXcheckError as e:
-            if "DiJet" in e.branch or "nCleanedJets" in e.branch:
+            if "DiJet" in e.branch or "nCleanedJets" in e.branch or "mavjj" in e.branch:
+              t.Show()
               print list(t.JetID)
               print list(t.JetPUID)
               print list(t.JetPt)
+              print list(t.JetEta)
+              print list(t.JetPhi)
+              print list(t.JetMass)
               print list(t.JetSigma)
-              print list(t.JetIsBtaggedWithSF)
+              print list(t.LepLepId)
+              print list(t.LepPt)
+              print list(t.LepEta)
+              print list(t.LepPhi)
               raise
             nbadxchecks[branch.name] += 1
         newt.Fill()
