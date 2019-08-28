@@ -37,10 +37,6 @@ class MelaWrapper(object):
     if self.__melaeventdummybranch is melaeventdummybranch: return
     self.resetInputEvent()
     self.__melaeventdummybranch = melaeventdummybranch
-    print "===================================="
-    jets = melaeventdummybranch.lastsetbranchvalue[1]
-    for _ in jets: _.second.Print()
-    print "===================================="
     self.mela.setInputEvent(*melaeventdummybranch.lastsetbranchvalue)
 
   def resetInputEvent(self):
