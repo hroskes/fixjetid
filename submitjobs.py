@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 
-import errno, getpass, math, os, subprocess
+import argparse, errno, getpass, math, os, subprocess
+
+p = argparse.ArgumentParser()
+p.add_argument("--testing", action="store_true")
+args = p.parse_args()
+
 import ROOT
 
 oldmaindir = "/work-zfs/lhc/CJLSTtrees/190821/"
@@ -19,64 +24,68 @@ def mkdir_p(path):
       raise
 
 
-for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", "MC_2017", "MC_2017_anomalous", "MC_2018", "MC_2018_anomalous":
-  if {
-    "jroskes1@jhu.edu": "2016",
-    "agritsa1@jhu.edu": "2017",
-    "skyriac2@jhu.edu": "2018",
-  }[getpass.getuser()] not in a: continue
+def run(testing=False):
+  for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", "MC_2017", "MC_2017_anomalous", "MC_2018", "MC_2018_anomalous":
+    if {
+      "jroskes1@jhu.edu": "2016",
+      "agritsa1@jhu.edu": "2017",
+      "skyriac2@jhu.edu": "2018",
+    }[getpass.getuser()] not in a: continue
 
-  for b in os.listdir(os.path.join(oldmaindir, a)):
-    if b == "AAAOK": continue
-    if b.lower() == "chunks": continue
-    if b == "Chunks_2018_MC_b10d7cd8": continue
-    if "Data" in a and b != "AllData": continue
-    olddir = os.path.join(oldmaindir, a, b)
-    oldfilename = os.path.join(olddir, "ZZ4lAnalysis.root")
-    newdir = os.path.join(newmaindir, a, b)
-    mkdir_p(newdir)
-    newfilename = os.path.join(newdir, "ZZ4lAnalysis.root")
-    if os.path.exists(newfilename): continue
+    for b in os.listdir(os.path.join(oldmaindir, a)):
+      if b == "AAAOK": continue
+      if b.lower() == "chunks": continue
+      if b == "Chunks_2018_MC_b10d7cd8": continue
+      if "Data" in a and b != "AllData": continue
+      olddir = os.path.join(oldmaindir, a, b)
+      oldfilename = os.path.join(olddir, "ZZ4lAnalysis.root")
+      newdir = os.path.join(newmaindir, a, b)
+      mkdir_p(newdir)
+      newfilename = os.path.join(newdir, "ZZ4lAnalysis.root")
+      if os.path.exists(newfilename): continue
 
-    f = ROOT.TFile(oldfilename)
-    t = f.Get("ZZTree/candTree")
-    events = t.GetEntries()
-    if "AllData" in b:
-      t = f.Get("CRZLLTree/candTree")
-      events = max(events, t.GetEntries())
-    njobs = int(math.ceil(1.0 * events / eventsperjob))
-
-    dohadd = True
-    haddcommand = ["hadd", newfilename]
-
-    for i in range(njobs):
-      firstevent = i*eventsperjob
-      lastevent = (i+1)*eventsperjob - 1
-      newsubfilename = os.path.join(newdir, "ZZ4lAnalysis_{}_{}.root".format(firstevent, lastevent))
-      if njobs == 1:
-        newsubfilename = newfilename
-        dohadd = False
-      cmdline = [
-        "sbatch",
-        "--job-name="+os.path.join(a, b, os.path.basename(newsubfilename)),
-        "--time=1:0:0",
-        "--nodes=1",
-        "--mem=3000",
-        "--partition=shared",
-        "--output="+os.path.join(newdir, newsubfilename.replace(".root", ".out")),
-        "--error="+os.path.join(newdir, newsubfilename.replace(".root", ".err")),
-
-        "run.sh", oldfilename, newsubfilename,
-        "--first-event", str(firstevent), "--last-event", str(lastevent),
-      ]
+      f = ROOT.TFile(oldfilename)
+      t = f.Get("ZZTree/candTree")
+      events = t.GetEntries()
       if "AllData" in b:
-        cmdline.append("--doCRZLL")
+        t = f.Get("CRZLLTree/candTree")
+        events = max(events, t.GetEntries())
+      njobs = int(math.ceil(1.0 * events / eventsperjob))
 
-      haddcommand.append(newsubfilename)
+      dohadd = True
+      haddcommand = ["hadd", newfilename]
 
-      if not os.path.exists(newsubfilename):
-        subprocess.check_call(cmdline)
-        dohadd = False
+      for i in range(njobs):
+        firstevent = i*eventsperjob
+        lastevent = (i+1)*eventsperjob - 1
+        newsubfilename = os.path.join(newdir, "ZZ4lAnalysis_{}_{}.root".format(firstevent, lastevent))
+        if njobs == 1:
+          newsubfilename = newfilename
+          dohadd = False
+        cmdline = [
+          "sbatch",
+          "--job-name="+os.path.join(a, b, os.path.basename(newsubfilename)),
+          "--time=1:0:0",
+          "--nodes=1",
+          "--mem=3000",
+          "--partition=shared",
+          "--output="+os.path.join(newdir, newsubfilename.replace(".root", ".out")),
+          "--error="+os.path.join(newdir, newsubfilename.replace(".root", ".err")),
 
-    if dohadd:
-      subprocess.check_call(haddcommand)
+          "run.sh", oldfilename, newsubfilename,
+          "--first-event", str(firstevent), "--last-event", str(lastevent),
+        ]
+        if "AllData" in b:
+          cmdline.append("--doCRZLL")
+
+        haddcommand.append(newsubfilename)
+
+        if not os.path.exists(newsubfilename):
+          subprocess.check_call(cmdline)
+          dohadd = False
+          if testing: return
+
+      if dohadd:
+        subprocess.check_call(haddcommand)
+
+run(**args.__dict__)
