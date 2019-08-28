@@ -68,7 +68,7 @@ def run(a, b, testing=False, print_order=False):
     cmdline = [
       "sbatch",
       "--job-name="+os.path.join(a, b, os.path.basename(newsubfilename)),
-      "--time=2:0:0",
+      "--time=5:0:0",
       "--nodes=1",
       "--mem=3000",
       "--partition=shared",
