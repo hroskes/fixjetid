@@ -8,6 +8,8 @@ if __name__ == "__main__":
   p.add_argument("--no-id", action="store_false", dest="applyid")
   p.add_argument("--no-pu-id", action="store_false", dest="applypuid")
   p.add_argument("--test-no-mela", action="store_true")
+  p.add_argument("--first-event", type=int, default=0, dest="firstevent")
+  p.add_argument("--debug", action="store_true")
   args = p.parse_args()
 
 
@@ -285,7 +287,7 @@ class MELABranch(FirstJetsVariable):
         or "JECNominal" in self.name and t.nCleanedJetsPt30 > 1
       )
     ): return True
-    return np.isclose(new, old, atol=1e-17, rtol=1e-2)
+    return np.isclose(new, old, atol=1e-15, rtol=1e-2)
 
 class MELAProbability(MELABranch):
   def __init__(self, name, melaeventdummybranch, setprocessargnames, couplings, melafunctionname, melafunctionargs, subtractbranches=[], initialQQ=False):
@@ -315,6 +317,13 @@ class MELAProbability(MELABranch):
       return result - sum(_.lastsetbranchvalue for _ in subtractbranches)
     super(MELAProbability, self).__init__(name, function, np.float32, melaeventdummybranch.firstjetmomentabranch, -1)
     self.firstjetmomentabranch = melaeventdummybranch.firstjetmomentabranch
+    self.__subtractbranches = subtractbranches
+
+  def compareforxcheck(self, new, old, t):
+    if super(MELAProbability, self).compareforxcheck(new, old, t): return True
+    if self.__subtractbranches:
+      if all(abs(new / _.lastsetbranchvalue) < 1e-4 for _ in self.__subtractbranches): return True
+    return False
 
 class MELAPConst(MELABranch):
   def __init__(self, melaprobability):
@@ -498,7 +507,7 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
 
 branches += nominalbranches + upbranches + downbranches
 
-def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], test_no_mela=False):
+def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], test_no_mela=False, firstevent=0, lastevent=float("inf"), debug=False):
   print "Processing", infile, "-->", outfile
   with TFile(infile) as f, TFile(outfile, "CREATE", deleteifbad=True) as newf:
     for foldername in folders:
@@ -523,14 +532,16 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], 
       nxchecks = 0
       nbadxchecks = collections.Counter()
       worstbadxcheck = collections.defaultdict(lambda: None)
-      for i, entry in enumerate(t, start=1):
+      for i, entry in enumerate(t):
+        if i < firstevent: continue
+        if i > lastevent: break
         doxcheck = (all(t.JetID) or not applyid) and (all(t.JetPUID) or not applypuid)
         nxchecks += doxcheck
         for branch in branches:
           try:
             branch.setbranchvalue(t, applyid, applypuid, doxcheck)
           except FailedXcheckError as e:
-            if "DiJet" in e.branch or "nCleanedJets" in e.branch or "mavjj" in e.branch or "JECNominal" in e.branch:
+            if debug:
               t.Show()
               print list(t.JetID)
               print list(t.JetPUID)
@@ -548,8 +559,8 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], 
         newt.Fill()
         mela.resetInputEvent()
 
-        if i%10000 == 0 or i == nentries or True:
-          print i, "/", nentries
+        if (i+1)%10000 == 0 or (i+1) == nentries or True:
+          print i+1, "/", nentries
 
     print "Done!"
     print "Did xchecks on", nxchecks, " branches that had all jets passing ID and PUID"
