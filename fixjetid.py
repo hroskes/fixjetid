@@ -507,19 +507,23 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
 
 branches += nominalbranches + upbranches + downbranches
 
-def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], test_no_mela=False, firstevent=0, lastevent=float("inf"), debug=False):
+def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_no_mela=False, firstevent=0, lastevent=float("inf"), debug=False):
   print "Processing", infile, "-->", outfile
+  folders = ["ZZTree"]
+  if doCRZLL: folders.append("CRZLLTree")
+
   with TFile(infile) as f, TFile(outfile, "CREATE", deleteifbad=True) as newf:
     for foldername in folders:
       folder = f.Get(foldername)
       newfolder = newf.mkdir(foldername)
-      Counters = folder.Get("Counters")
-      Counters.SetDirectory(newfolder)
 
-      failedt = folder.Get("candTree_failed")
-      if failedt:
-        newfailedt = failedt.CloneTree(-1, "fast")
-        newfailedt.SetDirectory(newfolder)
+      if firstevent <= 0:  #so that we can hadd without duplicating things
+        Counters = folder.Get("Counters")
+        Counters.SetDirectory(newfolder)
+        failedt = folder.Get("candTree_failed")
+        if failedt:
+          newfailedt = failedt.CloneTree(-1, "fast")
+          newfailedt.SetDirectory(newfolder)
 
       t = folder.Get("candTree")
       newt = t.CloneTree(0, "fast")
