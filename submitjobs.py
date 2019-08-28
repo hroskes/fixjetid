@@ -93,6 +93,7 @@ for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", 
     "agritsa1@jhu.edu": "2017",
     "skyriac2@jhu.edu": "2018",
   }[getpass.getuser()] not in a: continue
+  if "Data" in a: continue #debugging CR
 
   for b in os.listdir(os.path.join(oldmaindir, a)):
     if b == "AAAOK": continue
