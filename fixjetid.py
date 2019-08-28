@@ -99,7 +99,12 @@ class TFile(object):
     if self.__write and self.__deleteifbad and any(errorstuff):
       os.remove(self.__filename)
 
-class FailedXcheckError(Exception): pass
+class FailedXcheckError(Exception):
+  def __init__(self, branch, old, new):
+    self.branch = branch
+    self.old = old
+    self.new = new
+    super(FailedXcheckError, self).__init__("old value of {} is {}, not the same as the new calculated value {}".format(branch, old, new))
 
 class Branch(object):
   __metaclass__ = abc.ABCMeta
@@ -122,7 +127,8 @@ class Branch(object):
         raise ValueError("Wrong type for {}: {}, should be {}".format(self.__name, self.__type, type(getattr(t, self.__name))))
 
   def convertforxcheck(self, thing): return thing
-  def compareforxcheck(self, new, old, t): return new == old
+  @abc.abstractmethod
+  def compareforxcheck(self, new, old, t): pass
 
   @abc.abstractmethod
   def setthingfortree(self, t, applyid, applypuid): pass
@@ -134,7 +140,7 @@ class Branch(object):
       old = self.convertforxcheck(getattr(t, self.__name))
       new = self.convertforxcheck(newvalue)
       if not self.compareforxcheck(new, old, t):
-        raise FailedXcheckError("old value of {} is {}, not the same as the new calculated value {}".format(self.__name, old, new))
+        raise FailedXcheckError(self.__name, old, new)
 
   @property
   def name(self): return self.__name
@@ -152,6 +158,8 @@ class DummyBranch(Branch):
   def setbranchvalue(self, t, applyid, applypuid, doxcheck):
     super(DummyBranch, self).setbranchvalue(t, applyid, applypuid, False)
 
+  def compareforxcheck(self, new, old, t): assert False
+
 class NormalBranch(Branch):
   def __init__(self, name, function, typ):
     super(NormalBranch, self).__init__(name, typ)
@@ -162,6 +170,7 @@ class NormalBranch(Branch):
   def setthingfortree(self, t, applyid, applypuid):
     self.__array[0] = self.__function(t, applyid, applypuid)
     return self.__array[0]
+  def compareforxcheck(self, new, old, t): return np.isclose(new, old, atol=0, rtol=1e-6)
 
 class NotRecalculatedBranch(NormalBranch):
   def __init__(self, name, dummyvalue, typ):
@@ -184,6 +193,7 @@ class JetVectorBranch(Branch):
     return self.__vector
 
   def convertforxcheck(self, thing): return list(thing)
+  def compareforxcheck(self, new, old, t): return list(new) == list(old)
 
 class NJetsBranch(NormalBranch):
   def __init__(self, name, jetcondition):
@@ -305,8 +315,8 @@ branches = [
   NJetsBranch("nCleanedJetsPt30BTagged_bTagSF", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsf),
   NJetsBranch("nCleanedJetsPt30BTagged_bTagSFUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsfup),
   NJetsBranch("nCleanedJetsPt30BTagged_bTagSFDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt>30 and isbtaggedsfdn),
-  NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1+sigma)>30 and isbtagged),
-  NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30 and isbtagged),
+  NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecUp", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1+sigma)>30 and isbtaggedsf),
+  NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30 and isbtaggedsf),
 ]
 
 jetpt = JetVectorBranch("JetPt", "float")
@@ -486,7 +496,14 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], 
         for branch in branches:
           try:
             branch.setbranchvalue(t, applyid, applypuid, doxcheck)
-          except FailedXcheckError:
+          except FailedXcheckError as e:
+            if "DiJet" in e.branch or "nCleanedJets" in e.branch:
+              print list(t.JetID)
+              print list(t.JetPUID)
+              print list(t.JetPt)
+              print list(t.JetSigma)
+              print list(t.JetIsBtaggedWithSF)
+              raise
             nbadxchecks[branch.name] += 1
         newt.Fill()
         mela.resetInputEvent()
@@ -498,7 +515,7 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], 
     print "Did xchecks on", nxchecks, " branches that had all jets passing ID and PUID"
     if nbadxchecks:
       print "The following branches had some disagreements:"
-      for k, v in sorted(nbadxchecks.iteritems(), key=reversed):
+      for k, v in sorted(nbadxchecks.iteritems(), key=lambda x: (x[1], x[0])):
         print "{:50} {}".format(k, v)
     else:
       print "All xchecks pass"
