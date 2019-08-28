@@ -263,6 +263,8 @@ class MELAEventDummyBranch(DummyBranch):
       (lepid, maketlv(pt, eta, phi, 0))
         for lepid, pt, eta, phi in izip(t.LepLepId, t.LepPt, t.LepEta, t.LepPhi)
     )
+    for pt, eta, phi, which in izip(t.fsrPt, t.fsrEta, t.fsrPhi, t.fsrLept):
+      leptons[which-1].second += maketlv(pt, eta, phi, 0)
     jets = SimpleParticleCollection_t(
       (0, jet) for jet in self.__firstjetmomentabranch.lastsetbranchvalue
     )
@@ -272,7 +274,20 @@ class MELAEventDummyBranch(DummyBranch):
   @property
   def firstjetmomentabranch(self): return self.__firstjetmomentabranch
 
-class MELAProbability(FirstJetsVariable):
+class MELABranch(FirstJetsVariable):
+  def compareforxcheck(self, new, old, t):
+    if (
+      ("_JVBF_" in self.name or "_JQCD_" in self.name)
+      and (new == -1 or "pConst" in self.name and new == 1)
+      and old > 0
+      and (
+        "JECUp" in self.name and t.nCleanedJetsPt30_jecUp > 1
+        or "JECNominal" in self.name and t.nCleanedJetsPt30 > 1
+      )
+    ): return True
+    return np.isclose(new, old, atol=1e-17, rtol=1e-2)
+
+class MELAProbability(MELABranch):
   def __init__(self, name, melaeventdummybranch, setprocessargnames, couplings, melafunctionname, melafunctionargs, subtractbranches=[], initialQQ=False):
     setprocessargs = []
     def function(*jets):
@@ -299,16 +314,23 @@ class MELAProbability(FirstJetsVariable):
         result=result*cMEAvg
       return result - sum(_.lastsetbranchvalue for _ in subtractbranches)
     super(MELAProbability, self).__init__(name, function, np.float32, melaeventdummybranch.firstjetmomentabranch, -1)
+    self.firstjetmomentabranch = melaeventdummybranch.firstjetmomentabranch
 
-  def compareforxcheck(self, new, old, t):
-    if (
-      ("_JVBF_" in self.name or "_JQCD_" in self.name)
-      and "JECUp" in self.name
-      and new == -1
-      and old > 0
-      and t.nCleanedJetsPt30_jecUp > 1
-    ): return True
-    return np.isclose(new, old, atol=0, rtol=1e-3)
+class MELAPConst(MELABranch):
+  def __init__(self, melaprobability):
+    assert melaprobability.name.startswith("p_")
+    name = melaprobability.name.replace("p_", "pConst_", 1)
+    def function(*jets):
+      return mela.getConstant()
+    super(MELAPConst, self).__init__(name, function, np.float32, melaprobability.firstjetmomentabranch, 1)
+
+class MELAPAux(MELABranch):
+  def __init__(self, melaprobability):
+    assert melaprobability.name.startswith("p_")
+    name = melaprobability.name.replace("p_", "pAux_", 1)
+    def function(*jets):
+      return mela.getPAux()
+    super(MELAPAux, self).__init__(name, function, np.float32, melaprobability.firstjetmomentabranch, 1)
 
 branches = [
   NJetsBranch("nCleanedJets", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: True),
@@ -467,6 +489,13 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
       )
       MELAbranchesdict[name] = lst[-1]
 
+      if "AddPConst" in options:
+        assert int(options["AddPConst"]) == 1
+        lst.append(MELAPConst(MELAbranchesdict[name]))
+      if "AddPAux" in options:
+        assert int(options["AddPAux"]) == 1
+        lst.append(MELAPAux(MELAbranchesdict[name]))
+
 branches += nominalbranches + upbranches + downbranches
 
 def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], test_no_mela=False):
@@ -501,7 +530,7 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], 
           try:
             branch.setbranchvalue(t, applyid, applypuid, doxcheck)
           except FailedXcheckError as e:
-            if "DiJet" in e.branch or "nCleanedJets" in e.branch or "mavjj" in e.branch:
+            if "DiJet" in e.branch or "nCleanedJets" in e.branch or "mavjj" in e.branch or "JECNominal" in e.branch:
               t.Show()
               print list(t.JetID)
               print list(t.JetPUID)
