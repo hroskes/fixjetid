@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import errno, math, os, subprocess
+import errno, getpass, math, os, subprocess
 import ROOT
 
 oldmaindir = "/work-zfs/lhc/CJLSTtrees/190821/"
@@ -20,6 +20,12 @@ def mkdir_p(path):
 
 
 for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", "MC_2017", "MC_2017_anomalous", "MC_2018", "MC_2018_anomalous":
+  if {
+    "jroskes1@jhu.edu": "2016",
+    "agritsa1@jhu.edu": "2017",
+    "skyriac2@jhu.edu": "2018",
+  }[getpass.getuser()] not in a: continue
+
   for b in os.listdir(os.path.join(oldmaindir, a)):
     if b == "AAAOK": continue
     if b.lower() == "chunks": continue
@@ -47,9 +53,12 @@ for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", 
       firstevent = i*eventsperjob
       lastevent = (i+1)*eventsperjob - 1
       newsubfilename = os.path.join(newdir, "ZZ4lAnalysis_{}_{}.root".format(firstevent, lastevent))
+      if njobs == 1:
+        newsubfilename = newfilename
+        dohadd = False
       cmdline = [
         "sbatch",
-        "--job-name="+os.path.basename(newsubfilename),
+        "--job-name="+os.path.join(a, b, os.path.basename(newsubfilename)),
         "--time=1:0:0",
         "--nodes=1",
         "--mem=3000",
