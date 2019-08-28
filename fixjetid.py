@@ -510,6 +510,7 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_
   folders = ["ZZTree"]
   if doCRZLL: folders.append("CRZLLTree")
 
+  cache = []
   with TFile(infile) as f, TFile(outfile, "CREATE", deleteifbad=True) as newf:
     for foldername in folders:
       folder = f.Get(foldername)
@@ -518,14 +519,19 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_
       if firstevent <= 0:  #so that we can hadd without duplicating things
         Counters = folder.Get("Counters")
         Counters.SetDirectory(newfolder)
+        cache.append(Counters)
         failedt = folder.Get("candTree_failed")
         if failedt:
           newfailedt = failedt.CloneTree(-1, "fast")
           newfailedt.SetDirectory(newfolder)
+          cache.append(failedt)
+          cache.append(newfailedt)
 
       t = folder.Get("candTree")
       newt = t.CloneTree(0, "fast")
       newt.SetDirectory(newfolder)
+      cache.append(t)
+      cache.append(newt)
 
       for branch in branches:
         branch.attachtotree(newt)
