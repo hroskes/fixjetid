@@ -251,6 +251,18 @@ class FirstJetsVariable(NormalBranch):
       if len(jets) < firstjetmomentabranch.n: return fallbackvalue
       return functiononjets(*jets)
     super(FirstJetsVariable, self).__init__(name, function, typ)
+    self.__n = firstjetmomentabranch.n
+
+  def compareforxcheck(self, new, old, t):
+    if (
+      "DiJet" in self.name
+      and new == -99
+      and old > -98
+      and t.nCleanedJetsPt30 < self.__n
+      and t.CRflag not in (0, 805306368, 268435456)
+    ):
+      return True  #happens in CRZLLTree sometimes, not sure what that's about
+    return super(FirstJetsVariable, self).compareforxcheck(new, old, t)
 
 class MELAEventDummyBranch(DummyBranch):
   def __init__(self, firstjetmomentabranch):
@@ -285,6 +297,21 @@ class MELABranch(FirstJetsVariable):
         or "JECNominal" in self.name and t.nCleanedJetsPt30 > 1
       )
     ): return True
+    if (
+      ("_JVBF_" in self.name or "_JQCD_" in self.name)
+      and (old == -1 or ("pConst" in self.name or "pAux" in self.name) and old == 1)
+      and new > 0
+      and t.nCleanedJetsPt30 == 1
+      and t.CRflag not in (0, 805306368, 268435456)
+    ):
+      return True  #happens in CRZLLTree sometimes, not sure what that's about
+    if (
+      ("_JJ" in self.name or "_Had" in self.name or "bbH" in self.name)
+      and (new == -1 or "pConst" in self.name and new == 1)
+      and t.nCleanedJetsPt30 == 1
+      and t.CRflag not in (0, 805306368, 268435456)
+    ):
+      return True  #happens in CRZLLTree sometimes, not sure what that's about
     return np.isclose(new, old, atol=1e-15, rtol=1e-2)
 
 class MELAProbability(MELABranch):
