@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, errno, getpass, math, os, subprocess
+import argparse, errno, getpass, math, os, shutil, tempfile, subprocess
 
 p = argparse.ArgumentParser()
 p.add_argument("--testing", action="store_true")
@@ -52,7 +52,7 @@ def run(a, b, testing=False, print_order=False):
   njobs = int(math.ceil(1.0 * events / eventsperjob))
 
   dohadd = True
-  haddcommand = ["hadd", newfilename]
+  haddcommand = ["hadd", None]
 
   if print_order:
     print "{:20} {:30} {:>3}".format(a, b, njobs)
@@ -100,7 +100,12 @@ def run(a, b, testing=False, print_order=False):
       if testing: return "submitted"
 
   if dohadd:
-    subprocess.check_call(haddcommand)
+    with tempfile.NamedTemporaryFile(bufsize=0, suffix=".root") as f:
+      os.remove(f.name)
+      haddcommand[1] = f.name
+      subprocess.check_call(haddcommand)
+      shutil.move(f.name, newfilename)
+      with open(f.name, "w"): pass
 
 folders = []
 
