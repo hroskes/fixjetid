@@ -562,6 +562,10 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_
               print list(t.LepPt)
               print list(t.LepEta)
               print list(t.LepPhi)
+              print list(t.fsrPt)
+              print list(t.fsrEta)
+              print list(t.fsrPhi)
+              print list(t.fsrLept)
               raise
             nbadxchecks[branch.name] += 1
         newt.Fill()
