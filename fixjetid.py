@@ -228,12 +228,12 @@ class FirstNJetMomenta(DummyBranch):
       sigma = self.__sigmabranch.lastsetbranchvalue
       pt = [_ * (1 + self.__jecdirection * s) for _, s in izip(pt, sigma)]
       mass = [_ * (1 + self.__jecdirection * s) for _, s in izip(mass, sigma)]
-    pt = [_ for _ in pt if _>30]
 
     eta = self.__etabranch.lastsetbranchvalue
     phi = self.__phibranch.lastsetbranchvalue
 
     result = [maketlv(*_) for _ in izip(pt, eta, phi, mass)]
+    result = [j for j in result if j.Pt() > 30]
 #    result.sort(key=lambda x: x.Pt(), reverse=True)
 
     if self.__rejectiftoomany and len(result) > self.__n: result = []
