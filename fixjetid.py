@@ -381,6 +381,10 @@ branches += [
 
 MELAbranchesdict = {}
 
+nominalbranches = []
+upbranches = []
+downbranches = []
+
 with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisStep", "test", "prod", "pyFragments", "RecoProbabilities.py")) as f:
   for line in f:
     line = line.split("#")[0]
@@ -418,7 +422,7 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
       melafunctionname = "computeDijetConvBW"
       melafunctionargs = True,
 
-    for jec in "Nominal", "Up", "Dn":
+    for jec, lst in ("Nominal", nominalbranches), ("Up", upbranches), ("Dn", downbranches):
       name = options["Name"]
       assert "Nominal" in name
       name = name.replace("Nominal", jec)
@@ -436,7 +440,7 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
       if "SubtractP" in options:
         subtractbranches = [MELAbranchesdict[_.replace("Nominal", jec)] for _ in options["SubtractP"].split(",") if "ttH" not in _]
 
-      branches.append(
+      lst.append(
         MELAProbability(
           "p_"+name,
           inputevent,
@@ -448,7 +452,9 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
           initialQQ,
         )
       )
-      MELAbranchesdict[name] = branches[-1]
+      MELAbranchesdict[name] = lst[-1]
+
+branches += nominalbranches + upbranches + downbranches
 
 def fixjetid(infile, outfile, applyid=True, applypuid=True, folders=["ZZTree"], test_no_mela=False):
   print "Processing", infile, "-->", outfile
