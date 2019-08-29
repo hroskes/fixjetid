@@ -7,6 +7,7 @@ if __name__ == "__main__":
   p.add_argument("outfile")
   p.add_argument("--no-id", action="store_false", dest="applyid")
   p.add_argument("--no-pu-id", action="store_false", dest="applypuid")
+  p.add_argument("--remove-JER", action="store_true", dest="removeJER")
   p.add_argument("--test-no-mela", action="store_true")
   p.add_argument("--first-event", type=int, default=0, dest="firstevent")
   p.add_argument("--last-event", type=int, default=float("inf"), dest="lastevent")
@@ -135,10 +136,10 @@ class Branch(object):
   def compareforxcheck(self, new, old, t): pass
 
   @abc.abstractmethod
-  def setthingfortree(self, t, applyid, applypuid): pass
+  def setthingfortree(self, t, applyid, applypuid, removeJER): pass
 
-  def setbranchvalue(self, t, applyid, applypuid, doxcheck):
-    newvalue = self.setthingfortree(t, applyid, applypuid)
+  def setbranchvalue(self, t, applyid, applypuid, removeJER, doxcheck):
+    newvalue = self.setthingfortree(t, applyid, applypuid, removeJER)
     self.lastsetbranchvalue = newvalue
     if doxcheck:
       old = self.convertforxcheck(getattr(t, self.__name))
@@ -159,8 +160,8 @@ class DummyBranch(Branch):
   def thingforsetbranchaddress(self): return None
   def attachtotree(self, t): pass
 
-  def setbranchvalue(self, t, applyid, applypuid, doxcheck):
-    super(DummyBranch, self).setbranchvalue(t, applyid, applypuid, False)
+  def setbranchvalue(self, t, applyid, applypuid, removeJER, doxcheck):
+    super(DummyBranch, self).setbranchvalue(t, applyid, applypuid, removeJER, False)
 
   def compareforxcheck(self, new, old, t): assert False
 
@@ -171,28 +172,30 @@ class NormalBranch(Branch):
     self.__array = np.array([0], typ)
   @property
   def thingforsetbranchaddress(self): return self.__array
-  def setthingfortree(self, t, applyid, applypuid):
-    self.__array[0] = self.__function(t, applyid, applypuid)
+  def setthingfortree(self, t, applyid, applypuid, removeJER):
+    self.__array[0] = self.__function(t, applyid, applypuid, removeJER)
     return self.__array[0]
   def compareforxcheck(self, new, old, t): return np.isclose(new, old, atol=0, rtol=1e-6)
 
 class NotRecalculatedBranch(NormalBranch):
   def __init__(self, name, dummyvalue, typ):
     super(NotRecalculatedBranch, self).__init__(name, lambda *stuff: dummyvalue, typ)
-  def setbranchvalue(self, t, applyid, applypuid, doxcheck):
-    super(NotRecalculatedBranch, self).setbranchvalue(t, applyid, applypuid, False)
+  def setbranchvalue(self, t, applyid, applypuid, removeJER, doxcheck):
+    super(NotRecalculatedBranch, self).setbranchvalue(t, applyid, applypuid, removeJER, False)
 
 class JetVectorBranch(Branch):
-  def __init__(self, name, typ):
+  def __init__(self, name, typ, scaleswithJER=False):
     vectortyp = ROOT.vector(typ)
     super(JetVectorBranch, self).__init__(name, vectortyp)
     self.__vector = vectortyp(0)
+    self.__scaleswithJER = scaleswithJER
   @property
   def thingforsetbranchaddress(self): return self.__vector
-  def setthingfortree(self, t, applyid, applypuid):
+  def setthingfortree(self, t, applyid, applypuid, removeJER):
     self.__vector.clear()
-    for value, id, puid in izip(getattr(t, self.name), t.JetID, t.JetPUID):
+    for value, id, puid, pt, ptnoJER in izip(getattr(t, self.name), t.JetID, t.JetPUID, t.JetPt, t.JetPtJEC_noJER):
       if (id or not applyid) and (puid or not applypuid):
+        if removeJER and self.__scaleswithJER: value *= ptnoJER / pt
         self.__vector.push_back(value)
     return self.__vector
 
@@ -201,8 +204,8 @@ class JetVectorBranch(Branch):
 
 class NJetsBranch(NormalBranch):
   def __init__(self, name, jetcondition):
-    def njetsfunction(t, applyid, applypuid):
-      return sum(1 for id, puid, pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn in izip(t.JetID, t.JetPUID, t.JetPt, t.JetSigma, t.JetIsBtagged, t.JetIsBtaggedWithSF, t.JetIsBtaggedWithSFUp, t.JetIsBtaggedWithSFDn) if (id or not applyid) and (puid or not applypuid) and jetcondition(pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn))
+    def njetsfunction(t, applyid, applypuid, removeJER):
+      return sum(1 for id, puid, pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn in izip(t.JetID, t.JetPUID, (t.JetPtJEC_noJER if removeJER else t.JetPt), t.JetSigma, t.JetIsBtagged, t.JetIsBtaggedWithSF, t.JetIsBtaggedWithSFUp, t.JetIsBtaggedWithSFDn) if (id or not applyid) and (puid or not applypuid) and jetcondition(pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn))
     super(NJetsBranch, self).__init__(name, njetsfunction, np.short)
 
 def maketlv(pt, eta, phi, m):
@@ -221,9 +224,10 @@ class FirstNJetMomenta(DummyBranch):
     self.__rejectiftoomany = rejectiftoomany
     self.__sigmabranch = sigmabranch
     self.__jecdirection = jecdirection
-  def setthingfortree(self, t, applyid, applypuid):
+  def setthingfortree(self, t, applyid, applypuid, removeJER):
     pt = self.__ptbranch.lastsetbranchvalue
     mass = self.__massbranch.lastsetbranchvalue
+
     if self.__sigmabranch is not None:
       sigma = self.__sigmabranch.lastsetbranchvalue
       pt = [_ * (1 + self.__jecdirection * s) for _, s in izip(pt, sigma)]
@@ -246,7 +250,7 @@ class FirstNJetMomenta(DummyBranch):
 
 class FirstJetsVariable(NormalBranch):
   def __init__(self, name, functiononjets, typ, firstjetmomentabranch, fallbackvalue):
-    def function(t, applyid, applypuid):
+    def function(t, applyid, applypuid, removeJER):
       jets = firstjetmomentabranch.lastsetbranchvalue
       if len(jets) < firstjetmomentabranch.n: return fallbackvalue
       return functiononjets(*jets)
@@ -268,7 +272,7 @@ class MELAEventDummyBranch(DummyBranch):
   def __init__(self, firstjetmomentabranch):
     super(MELAEventDummyBranch, self).__init__(firstjetmomentabranch.name+"MELA")
     self.__firstjetmomentabranch = firstjetmomentabranch
-  def setthingfortree(self, t, applyid, applypuid):
+  def setthingfortree(self, t, applyid, applypuid, removeJER):
     if args.test_no_mela: assert False
     from ZZMatrixElement.MELA.mela import SimpleParticleCollection_t
     leptons = SimpleParticleCollection_t(
@@ -379,10 +383,10 @@ branches = [
   NJetsBranch("nCleanedJetsPt30BTagged_bTagSF_jecDn", lambda pt, sigma, isbtagged, isbtaggedsf, isbtaggedsfup, isbtaggedsfdn: pt*(1-sigma)>30 and isbtaggedsf),
 ]
 
-jetpt = JetVectorBranch("JetPt", "float")
+jetpt = JetVectorBranch("JetPt", "float", scaleswithJER=True)
 jeteta = JetVectorBranch("JetEta", "float")
 jetphi = JetVectorBranch("JetPhi", "float")
-jetmass = JetVectorBranch("JetMass", "float")
+jetmass = JetVectorBranch("JetMass", "float", scaleswithJER=True)
 jetsigma = JetVectorBranch("JetSigma", "float")
 
 branches += [
@@ -404,8 +408,8 @@ branches += [
   JetVectorBranch("JetPartonFlavour", "short"),
   JetVectorBranch("JetRawPt", "float"),
   JetVectorBranch("JetPtJEC_noJER", "float"),
-  JetVectorBranch("JetJERUp", "float"),
-  JetVectorBranch("JetJERDown", "float"),
+  JetVectorBranch("JetJERUp", "float", scaleswithJER=True),
+  JetVectorBranch("JetJERDown", "float", scaleswithJER=True),
   JetVectorBranch("JetID", "short"),
   JetVectorBranch("JetPUID", "short"),
   JetVectorBranch("JetPUValue", "float"),
@@ -532,7 +536,7 @@ with open(os.path.join(os.environ["CMSSW_BASE"], "src", "ZZAnalysis", "AnalysisS
 
 branches += nominalbranches + upbranches + downbranches
 
-def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_no_mela=False, firstevent=0, lastevent=float("inf"), debug=False):
+def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_no_mela=False, firstevent=0, lastevent=float("inf"), debug=False, removeJER=False):
   print "Processing", infile, "-->", outfile
   folders = ["ZZTree"]
   if doCRZLL: folders.append("CRZLLTree")
@@ -571,11 +575,11 @@ def fixjetid(infile, outfile, applyid=True, applypuid=True, doCRZLL=False, test_
       for i, entry in enumerate(t):
         if i < firstevent: continue
         if i > lastevent: break
-        doxcheck = (all(t.JetID) or not applyid) and (all(t.JetPUID) or not applypuid)
+        doxcheck = (all(t.JetID) or not applyid) and (all(t.JetPUID) or not applypuid) and not removeJER
         nxchecks += doxcheck
         for branch in branches:
           try:
-            branch.setbranchvalue(t, applyid, applypuid, doxcheck)
+            branch.setbranchvalue(t, applyid, applypuid, removeJER, doxcheck)
           except FailedXcheckError as e:
             if debug:
               t.Show()
