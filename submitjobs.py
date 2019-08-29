@@ -5,12 +5,16 @@ import argparse, errno, getpass, math, os, shutil, tempfile, subprocess
 p = argparse.ArgumentParser()
 p.add_argument("--testing", action="store_true")
 p.add_argument("--print-order", action="store_true")
+p.add_argument("--remove-JER", action="store_true")
 args = p.parse_args()
 
 import ROOT
 
 oldmaindir = "/work-zfs/lhc/CJLSTtrees/190821/"
-newmaindir = "/work-zfs/lhc/CJLSTtrees/190821_fixjetid/"
+if args.remove_JER:
+  newmaindir = "/work-zfs/lhc/CJLSTtrees/190821_fixjetid_removeJER/"
+else:
+  newmaindir = "/work-zfs/lhc/CJLSTtrees/190821_fixjetid/"
 
 eventsperjob = 10000
 
@@ -31,7 +35,7 @@ def mkdir_p(path):
       raise
 
 
-def run(a, b, testing=False, print_order=False):
+def run(a, b, testing=False, print_order=False, remove_JER=False):
   olddir = os.path.join(oldmaindir, a, b)
   oldfilename = os.path.join(olddir, "ZZ4lAnalysis.root")
   newdir = os.path.join(newmaindir, a, b)
@@ -80,6 +84,8 @@ def run(a, b, testing=False, print_order=False):
     ]
     if "AllData" in b:
       cmdline.append("--doCRZLL")
+    if remove_JER:
+      cmdline.append("--remove-JER")
 
     haddcommand.append(newsubfilename)
 
@@ -115,6 +121,7 @@ for a in "Data_2016", "Data_2017", "Data_2018", "MC_2016", "MC_2016_anomalous", 
     if b.lower() == "chunks": continue
     if b == "Chunks_2018_MC_b10d7cd8": continue
     if "Data" in a and b != "AllData": continue
+    if args.remove_JER and "MC_2018" not in a: continue
 
     folders.append((a, b))
 
